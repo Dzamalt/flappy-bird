@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 import tkinter as tk
 from dataclasses import dataclass
+from time import monotonic
 
 
 BOARD_SIZE = 8
@@ -101,6 +102,9 @@ class BlockBlastGame:
         self.new_game()
 
     def new_game(self) -> None:
+        if self.bomb_job is not None:
+            self.root.after_cancel(self.bomb_job)
+            self.bomb_job = None
         self.board = [[0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
         self.score = 0
         self.selected_piece_index = None
@@ -214,6 +218,41 @@ class BlockBlastGame:
         if piece is None:
             return False
 
+        valid = self.can_place_piece(self.dragging_piece, row, col)
+        border = "#7bed9f" if valid else "#ff6b81"
+        fill = "#7bed9f" if valid else "#ff4757"
+
+        for dx, dy in self.dragging_piece.cells:
+            r = row + dy
+            c = col + dx
+            if not (0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE):
+                continue
+            x1, y1 = c * CELL_SIZE, r * CELL_SIZE
+            x2, y2 = x1 + CELL_SIZE, y1 + CELL_SIZE
+            self.board_canvas.create_rectangle(
+                x1 + 2,
+                y1 + 2,
+                x2 - 2,
+                y2 - 2,
+                fill=fill,
+                outline=border,
+                width=2,
+                stipple="gray50",
+                tags="drag_preview",
+            )
+
+    def on_board_click(self, event: tk.Event) -> None:
+        if self.selected_piece_index is None:
+            return
+        row = event.y // CELL_SIZE
+        col = event.x // CELL_SIZE
+        self.place_selected_piece(self.selected_piece_index, row, col)
+
+    def place_selected_piece(self, piece_index: int, row: int, col: int) -> bool:
+        piece = self.offered_pieces[piece_index]
+        if piece is None:
+            return False
+
         if not self.can_place_piece(piece, row, col):
             self.flash_message("Cannot place piece there.")
             self.play_sound("invalid")
@@ -234,6 +273,7 @@ class BlockBlastGame:
         self.score += gained
         self.high_score = max(self.high_score, self.score)
         self.update_score_labels()
+        self.maybe_defuse_bomb()
 
         if all(p is None for p in self.offered_pieces):
             self.refresh_offered_pieces()
