@@ -230,9 +230,6 @@ class BlockBlastGame:
             gained += 8 * cleared
             self.flash_message(f"Cleared {cleared} line(s)! +{8 * cleared}")
             self.start_clear_effect(cleared_rows, cleared_cols)
-            self.play_sound("clear")
-        else:
-            self.play_sound("place")
 
         self.score += gained
         self.high_score = max(self.high_score, self.score)
