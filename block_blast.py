@@ -52,6 +52,10 @@ class BlockBlastGame:
         self.selected_piece_index: int | None = None
         self.score = 0
         self.high_score = 0
+        self.clear_effect_job: str | None = None
+        self.clear_effect_frame = 0
+        self.clear_effect_rows: list[int] = []
+        self.clear_effect_cols: list[int] = []
 
         outer = tk.Frame(self.root, bg="#1f2430", padx=10, pady=10)
         outer.pack()
@@ -135,10 +139,12 @@ class BlockBlastGame:
         self.selected_piece_index = None
 
         gained = len(piece.cells)
-        cleared = self.clear_lines()
+        cleared_rows, cleared_cols = self.clear_lines()
+        cleared = len(cleared_rows) + len(cleared_cols)
         if cleared:
             gained += 8 * cleared
             self.flash_message(f"Cleared {cleared} line(s)! +{8 * cleared}")
+            self.start_clear_effect(cleared_rows, cleared_cols)
 
         self.score += gained
         self.high_score = max(self.high_score, self.score)
@@ -167,7 +173,7 @@ class BlockBlastGame:
         for dx, dy in piece.cells:
             self.board[base_row + dy][base_col + dx] = piece.color
 
-    def clear_lines(self) -> int:
+    def clear_lines(self) -> tuple[list[int], list[int]]:
         full_rows = [r for r in range(BOARD_SIZE) if all(self.board[r][c] for c in range(BOARD_SIZE))]
         full_cols = [c for c in range(BOARD_SIZE) if all(self.board[r][c] for r in range(BOARD_SIZE))]
 
@@ -179,7 +185,64 @@ class BlockBlastGame:
             for r in range(BOARD_SIZE):
                 self.board[r][c] = 0
 
-        return len(full_rows) + len(full_cols)
+        return full_rows, full_cols
+
+    def start_clear_effect(self, rows: list[int], cols: list[int]) -> None:
+        self.clear_effect_rows = rows
+        self.clear_effect_cols = cols
+        self.clear_effect_frame = 0
+        if self.clear_effect_job is not None:
+            self.root.after_cancel(self.clear_effect_job)
+        self.animate_clear_effect()
+
+    def animate_clear_effect(self) -> None:
+        self.redraw_board()
+        flash_colors = ("#fff08a", "#ffd32a", "#7bed9f")
+        color = flash_colors[self.clear_effect_frame % len(flash_colors)]
+
+        for row in self.clear_effect_rows:
+            y1 = row * CELL_SIZE + 4
+            y2 = (row + 1) * CELL_SIZE - 4
+            self.board_canvas.create_rectangle(0, y1, BOARD_SIZE * CELL_SIZE, y2, fill=color, outline="", stipple="gray50")
+
+        for col in self.clear_effect_cols:
+            x1 = col * CELL_SIZE + 4
+            x2 = (col + 1) * CELL_SIZE - 4
+            self.board_canvas.create_rectangle(x1, 0, x2, BOARD_SIZE * CELL_SIZE, fill=color, outline="", stipple="gray50")
+
+        spark_radius = 4 + self.clear_effect_frame * 2
+        for row in self.clear_effect_rows:
+            for col in range(BOARD_SIZE):
+                cx = col * CELL_SIZE + CELL_SIZE // 2
+                cy = row * CELL_SIZE + CELL_SIZE // 2
+                self.board_canvas.create_oval(
+                    cx - spark_radius,
+                    cy - spark_radius,
+                    cx + spark_radius,
+                    cy + spark_radius,
+                    outline="#fefefe",
+                    width=2,
+                )
+
+        for col in self.clear_effect_cols:
+            for row in range(BOARD_SIZE):
+                cx = col * CELL_SIZE + CELL_SIZE // 2
+                cy = row * CELL_SIZE + CELL_SIZE // 2
+                self.board_canvas.create_oval(
+                    cx - spark_radius,
+                    cy - spark_radius,
+                    cx + spark_radius,
+                    cy + spark_radius,
+                    outline="#fefefe",
+                    width=2,
+                )
+
+        self.clear_effect_frame += 1
+        if self.clear_effect_frame < 6:
+            self.clear_effect_job = self.root.after(65, self.animate_clear_effect)
+        else:
+            self.clear_effect_job = None
+            self.redraw_board()
 
     def has_any_valid_move(self) -> bool:
         active_pieces = [p for p in self.offered_pieces if p is not None]
