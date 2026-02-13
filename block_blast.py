@@ -1,8 +1,8 @@
 """Simple Block Blast-style puzzle game using tkinter.
 
 How to play:
-- Pick one of the three offered block shapes on the right.
-- Click an empty position on the board to place the selected shape.
+- Drag one of the three offered block shapes onto the board.
+- You can also click a piece and click the board to place it.
 - Completing a full row or column clears it and grants bonus points.
 - Use all three offered shapes to get a fresh set.
 - Game ends when no offered shape can be placed anywhere.
@@ -50,6 +50,8 @@ class BlockBlastGame:
 
         self.board = [[0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
         self.selected_piece_index: int | None = None
+        self.dragging_piece_index: int | None = None
+        self.dragging_piece: Piece | None = None
         self.score = 0
         self.high_score = 0
         self.clear_effect_job: str | None = None
@@ -79,7 +81,7 @@ class BlockBlastGame:
         self.high_score_label = tk.Label(panel, text="Best: 0", fg="#dfe4ea", bg="#1f2430", font=("Arial", 11))
         self.high_score_label.pack(anchor="w", pady=(0, 10))
 
-        help_text = "Pick a piece → click board\nClear full rows/columns"
+        help_text = "Drag piece → drop on board\nOr click piece then board"
         tk.Label(panel, text=help_text, fg="#ced6e0", bg="#1f2430", justify="left").pack(anchor="w", pady=(0, 10))
 
         self.piece_canvases: list[tk.Canvas] = []
@@ -87,6 +89,7 @@ class BlockBlastGame:
             c = tk.Canvas(panel, width=6 * PALETTE_CELL, height=6 * PALETTE_CELL, bg="#2f3542", highlightthickness=2)
             c.pack(pady=6)
             c.bind("<Button-1>", lambda _evt, i=idx: self.select_piece(i))
+            c.bind("<ButtonPress-1>", lambda _evt, i=idx: self.start_drag(i))
             self.piece_canvases.append(c)
 
         self.message_label = tk.Label(panel, text="", fg="#ffdd59", bg="#1f2430", font=("Arial", 10, "bold"))
@@ -101,10 +104,12 @@ class BlockBlastGame:
         self.board = [[0 for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
         self.score = 0
         self.selected_piece_index = None
+        self.stop_drag()
         self.message_label.config(text="")
         self.refresh_offered_pieces()
         self.redraw_board()
         self.update_score_labels()
+        self.play_sound("new_game")
 
     def refresh_offered_pieces(self) -> None:
         self.offered_pieces = [random.choice(PIECES) for _ in range(3)]
@@ -117,25 +122,105 @@ class BlockBlastGame:
         self.selected_piece_index = index
         self.redraw_piece_palette()
 
+    def start_drag(self, index: int) -> None:
+        piece = self.offered_pieces[index]
+        if piece is None:
+            return
+        self.dragging_piece_index = index
+        self.dragging_piece = piece
+        self.selected_piece_index = index
+        self.play_sound("pick")
+        self.root.bind_all("<Motion>", self.on_global_motion)
+        self.root.bind_all("<ButtonRelease-1>", self.on_global_release)
+        self.redraw_piece_palette()
+        self.update_drag_preview(*self.root.winfo_pointerxy())
+
+    def stop_drag(self) -> None:
+        self.dragging_piece_index = None
+        self.dragging_piece = None
+        self.board_canvas.delete("drag_preview")
+        self.root.unbind_all("<Motion>")
+        self.root.unbind_all("<ButtonRelease-1>")
+
+    def on_global_motion(self, _event: tk.Event) -> None:
+        if self.dragging_piece is None:
+            return
+        self.update_drag_preview(*self.root.winfo_pointerxy())
+
+    def on_global_release(self, _event: tk.Event) -> None:
+        if self.dragging_piece is None or self.dragging_piece_index is None:
+            return
+
+        row, col = self.pointer_to_board_cell(*self.root.winfo_pointerxy())
+        if row is not None and col is not None and self.can_place_piece(self.dragging_piece, row, col):
+            self.place_selected_piece(self.dragging_piece_index, row, col)
+        else:
+            self.play_sound("invalid")
+
+        self.stop_drag()
+        self.redraw_piece_palette()
+        self.redraw_board()
+
+    def pointer_to_board_cell(self, pointer_x: int, pointer_y: int) -> tuple[int | None, int | None]:
+        board_x = pointer_x - self.board_canvas.winfo_rootx()
+        board_y = pointer_y - self.board_canvas.winfo_rooty()
+        col = board_x // CELL_SIZE
+        row = board_y // CELL_SIZE
+        if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
+            return None, None
+        return row, col
+
+    def update_drag_preview(self, pointer_x: int, pointer_y: int) -> None:
+        if self.dragging_piece is None:
+            return
+
+        self.board_canvas.delete("drag_preview")
+        row, col = self.pointer_to_board_cell(pointer_x, pointer_y)
+        if row is None or col is None:
+            return
+
+        valid = self.can_place_piece(self.dragging_piece, row, col)
+        border = "#7bed9f" if valid else "#ff6b81"
+        fill = "#7bed9f" if valid else "#ff4757"
+
+        for dx, dy in self.dragging_piece.cells:
+            r = row + dy
+            c = col + dx
+            if not (0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE):
+                continue
+            x1, y1 = c * CELL_SIZE, r * CELL_SIZE
+            x2, y2 = x1 + CELL_SIZE, y1 + CELL_SIZE
+            self.board_canvas.create_rectangle(
+                x1 + 2,
+                y1 + 2,
+                x2 - 2,
+                y2 - 2,
+                fill=fill,
+                outline=border,
+                width=2,
+                stipple="gray50",
+                tags="drag_preview",
+            )
+
     def on_board_click(self, event: tk.Event) -> None:
         if self.selected_piece_index is None:
             return
-
-        col = event.x // CELL_SIZE
         row = event.y // CELL_SIZE
-        if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
-            return
+        col = event.x // CELL_SIZE
+        self.place_selected_piece(self.selected_piece_index, row, col)
 
-        piece = self.offered_pieces[self.selected_piece_index]
+    def place_selected_piece(self, piece_index: int, row: int, col: int) -> bool:
+        piece = self.offered_pieces[piece_index]
         if piece is None:
-            return
+            return False
 
         if not self.can_place_piece(piece, row, col):
             self.flash_message("Cannot place piece there.")
-            return
+            self.play_sound("invalid")
+            return False
 
         self.place_piece(piece, row, col)
-        self.offered_pieces[self.selected_piece_index] = None
+        self.offered_pieces[piece_index] = None
         self.selected_piece_index = None
 
         gained = len(piece.cells)
@@ -158,6 +243,9 @@ class BlockBlastGame:
 
         if not self.has_any_valid_move():
             self.flash_message("Game over! Press New Game.")
+            self.play_sound("game_over")
+
+        return True
 
     def can_place_piece(self, piece: Piece, base_row: int, base_col: int) -> bool:
         for dx, dy in piece.cells:
@@ -296,6 +384,18 @@ class BlockBlastGame:
 
     def flash_message(self, text: str) -> None:
         self.message_label.config(text=text)
+
+    def play_sound(self, kind: str) -> None:
+        patterns = {
+            "new_game": (0, 100),
+            "pick": (0,),
+            "place": (0,),
+            "clear": (0, 70),
+            "invalid": (0, 80, 160),
+            "game_over": (0, 120, 240),
+        }
+        for delay in patterns.get(kind, (0,)):
+            self.root.after(delay, self.root.bell)
 
 
 def main() -> None:
