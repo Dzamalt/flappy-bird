@@ -55,11 +55,6 @@ class BlockBlastGame:
         self.dragging_piece: Piece | None = None
         self.score = 0
         self.high_score = 0
-        self.bomb_job: str | None = None
-        self.bomb_target_score = 0
-        self.bomb_start_score = 0
-        self.bomb_deadline = 0.0
-        self.bomb_penalty = 50
         self.clear_effect_job: str | None = None
         self.clear_effect_frame = 0
         self.clear_effect_rows: list[int] = []
@@ -86,12 +81,6 @@ class BlockBlastGame:
 
         self.high_score_label = tk.Label(panel, text="Best: 0", fg="#dfe4ea", bg="#1f2430", font=("Arial", 11))
         self.high_score_label.pack(anchor="w", pady=(0, 10))
-
-        self.bomb_label = tk.Label(panel, text="", fg="#ff6b81", bg="#1f2430", font=("Arial", 11, "bold"))
-        self.bomb_label.pack(anchor="w", pady=(0, 6))
-
-        self.bomb_target_label = tk.Label(panel, text="", fg="#ffb8b8", bg="#1f2430", font=("Arial", 10))
-        self.bomb_target_label.pack(anchor="w", pady=(0, 10))
 
         help_text = "Drag piece → drop on board\nOr click piece then board"
         tk.Label(panel, text=help_text, fg="#ced6e0", bg="#1f2430", justify="left").pack(anchor="w", pady=(0, 10))
@@ -124,49 +113,7 @@ class BlockBlastGame:
         self.refresh_offered_pieces()
         self.redraw_board()
         self.update_score_labels()
-        self.start_new_bomb_timer()
         self.play_sound("new_game")
-
-    def start_new_bomb_timer(self) -> None:
-        self.bomb_start_score = self.score
-        self.bomb_target_score = random.randint(15, 35)
-        self.bomb_deadline = monotonic() + random.uniform(8.0, 16.0)
-        self.update_bomb_ui()
-        self.schedule_bomb_tick()
-
-    def schedule_bomb_tick(self) -> None:
-        if self.bomb_job is not None:
-            self.root.after_cancel(self.bomb_job)
-        self.bomb_job = self.root.after(100, self.tick_bomb_timer)
-
-    def tick_bomb_timer(self) -> None:
-        remaining = self.bomb_deadline - monotonic()
-        if remaining <= 0:
-            self.score = max(0, self.score - self.bomb_penalty)
-            self.high_score = max(self.high_score, self.score)
-            self.flash_message(f"💥 Bomb exploded! -{self.bomb_penalty}")
-            self.play_sound("explode")
-            self.update_score_labels()
-            self.start_new_bomb_timer()
-            return
-
-        self.update_bomb_ui()
-        self.schedule_bomb_tick()
-
-    def update_bomb_ui(self) -> None:
-        remaining = max(0.0, self.bomb_deadline - monotonic())
-        needed = max(0, self.bomb_target_score - (self.score - self.bomb_start_score))
-        self.bomb_label.config(text=f"💣 Bomb timer: {remaining:0.1f}s")
-        self.bomb_target_label.config(text=f"Target before blast: +{needed} score")
-
-    def maybe_defuse_bomb(self) -> None:
-        gained_since_bomb = self.score - self.bomb_start_score
-        if gained_since_bomb >= self.bomb_target_score:
-            self.flash_message("Bomb defused! New bomb armed.")
-            self.play_sound("clear")
-            self.start_new_bomb_timer()
-        else:
-            self.update_bomb_ui()
 
     def refresh_offered_pieces(self) -> None:
         self.offered_pieces = [random.choice(PIECES) for _ in range(3)]
@@ -271,6 +218,41 @@ class BlockBlastGame:
         if piece is None:
             return False
 
+        valid = self.can_place_piece(self.dragging_piece, row, col)
+        border = "#7bed9f" if valid else "#ff6b81"
+        fill = "#7bed9f" if valid else "#ff4757"
+
+        for dx, dy in self.dragging_piece.cells:
+            r = row + dy
+            c = col + dx
+            if not (0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE):
+                continue
+            x1, y1 = c * CELL_SIZE, r * CELL_SIZE
+            x2, y2 = x1 + CELL_SIZE, y1 + CELL_SIZE
+            self.board_canvas.create_rectangle(
+                x1 + 2,
+                y1 + 2,
+                x2 - 2,
+                y2 - 2,
+                fill=fill,
+                outline=border,
+                width=2,
+                stipple="gray50",
+                tags="drag_preview",
+            )
+
+    def on_board_click(self, event: tk.Event) -> None:
+        if self.selected_piece_index is None:
+            return
+        row = event.y // CELL_SIZE
+        col = event.x // CELL_SIZE
+        self.place_selected_piece(self.selected_piece_index, row, col)
+
+    def place_selected_piece(self, piece_index: int, row: int, col: int) -> bool:
+        piece = self.offered_pieces[piece_index]
+        if piece is None:
+            return False
+
         if not self.can_place_piece(piece, row, col):
             self.flash_message("Cannot place piece there.")
             self.play_sound("invalid")
@@ -287,9 +269,6 @@ class BlockBlastGame:
             gained += 8 * cleared
             self.flash_message(f"Cleared {cleared} line(s)! +{8 * cleared}")
             self.start_clear_effect(cleared_rows, cleared_cols)
-            self.play_sound("clear")
-        else:
-            self.play_sound("place")
 
         self.score += gained
         self.high_score = max(self.high_score, self.score)
@@ -454,7 +433,6 @@ class BlockBlastGame:
             "clear": (0, 70),
             "invalid": (0, 80, 160),
             "game_over": (0, 120, 240),
-            "explode": (0, 70, 140, 210, 280),
         }
         for delay in patterns.get(kind, (0,)):
             self.root.after(delay, self.root.bell)
